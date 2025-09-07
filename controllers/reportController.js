@@ -5,7 +5,6 @@ const monthKey = { $dateToString: { format: "%Y-%m", date: "$date" } };
 
 // build series with zeros for missing periods
 function fillSeries(keys, docs, typeKeys = ["income", "expense", "savings"]) {
-  // docs: [{ _id: "YYYY-MM" | "YYYY-MM-DD", items: [{type,total}]}]
   const map = Object.fromEntries(
     docs.map(d => [d._id, Object.fromEntries(d.items.map(i => [i.type, i.total]))])
   );
@@ -16,70 +15,86 @@ function fillSeries(keys, docs, typeKeys = ["income", "expense", "savings"]) {
     return out;
   });
 }
-
-// ---------- Weekly (unchanged response shape: array) ----------
-export const weeklyReport = async (_req, res) => {
+// THIS WEEK (Mon–Sun) totals with timezone support
+export const weeklyReport = async (req, res) => {
   try {
+    // Use client-provided tz, or process.env.TZ, else UTC
+    const tz = req.query.tz || process.env.TZ || "UTC";
     const now = new Date();
-    const start = new Date(now);
-    start.setDate(now.getDate() - 6); // include today (7 days total)
-    start.setHours(0, 0, 0, 0);
 
+    // Aggregate only docs whose week (in tz) equals this week's start (in tz)
     const data = await Transaction.aggregate([
-      { $match: { date: { $gte: start, $lte: now } } },
+      {
+        $match: {
+          $expr: {
+            $eq: [
+              { $dateTrunc: { date: "$date", unit: "week", timezone: tz, startOfWeek: "Monday" } },
+              { $dateTrunc: { date: now,   unit: "week", timezone: tz, startOfWeek: "Monday" } }
+            ]
+          }
+        }
+      },
       {
         $group: {
           _id: {
-            day: { $dateToString: { format: "%Y-%m-%d", date: "$date" } },
-            type: "$type",
+            day:  { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: tz } },
+            type: "$type"
           },
-          total: { $sum: "$amount" },
-        },
+          total: { $sum: "$amount" }
+        }
       },
       {
         $group: {
           _id: "$_id.day",
-          items: { $push: { type: "$_id.type", total: "$total" } },
-        },
+          items: { $push: { type: "$_id.type", total: "$total" } }
+        }
       },
-      { $sort: { _id: 1 } },
+      { $sort: { _id: 1 } }
     ]);
 
-    // Normalize to include all days and all types
-    const days = [...Array(7).keys()].map((i) => {
-      const d = new Date(start);
-      d.setDate(start.getDate() + i);
-      const key = d.toISOString().slice(0, 10);
-      return key;
+    // Build Monday..Sunday in the SAME timezone (tz)
+    const toLocalISO = (d) =>
+      new Date(d).toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+
+    // Compute Monday 00:00 in tz
+    const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+    const dow = localNow.getDay(); // 0=Sun..6=Sat (in tz)
+    const diffToMonday = dow === 0 ? -6 : 1 - dow;
+    const monday = new Date(localNow);
+    monday.setDate(localNow.getDate() + diffToMonday);
+    monday.setHours(0, 0, 0, 0);
+
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return toLocalISO(d); // matches $dateToString above
     });
 
     const result = days.map((day) => {
       const entry = data.find((d) => d._id === day);
       const totals = { income: 0, expense: 0, savings: 0 };
-      if (entry) {
-        entry.items.forEach((i) => (totals[i.type] = i.total));
-      }
+      if (entry) entry.items.forEach((i) => (totals[i.type] = i.total));
       return { day, ...totals };
     });
 
-    // IMPORTANT: keep legacy shape = array
     res.json(result);
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
 };
 
-// ---------- Monthly (last 12 months; returns { period, data }) ----------
-export const monthlyReport = async (_req, res) => {
+
+// ---------- Monthly (BY YEAR; returns { period:'monthly', year, data:[...] }) ----------
+export const monthlyReport = async (req, res) => {
   try {
     const now = new Date();
-    const start = new Date(now);
-    start.setMonth(now.getMonth() - 11);
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
+    const year = Number(req.query.year) || now.getFullYear();
+
+    const start = new Date(year, 0, 1, 0, 0, 0, 0);     // Jan 1
+    const end   = new Date(year + 1, 0, 1, 0, 0, 0, 0); // Jan 1 next year (exclusive)
 
     const data = await Transaction.aggregate([
-      { $match: { date: { $gte: start, $lte: now } } },
+      { $match: { date: { $gte: start, $lt: end } } },
       {
         $group: {
           _id: { month: monthKey, type: "$type" },
@@ -95,25 +110,16 @@ export const monthlyReport = async (_req, res) => {
       { $sort: { _id: 1 } },
     ]);
 
-    // last 12 months keys "YYYY-MM"
-    const keys = [];
-    const cursor = new Date(start);
-    for (let i = 0; i < 12; i++) {
-      const y = cursor.getFullYear();
-      const m = String(cursor.getMonth() + 1).padStart(2, "0");
-      keys.push(`${y}-${m}`);
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-
-    const series = fillSeries(keys, data);
-    const result = series.map((d) => ({
+    // Ensure all 12 months exist
+    const keys = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
+    const series = fillSeries(keys, data).map(d => ({
       month: d.period,
       income: d.income,
       expense: d.expense,
       savings: d.savings,
     }));
 
-    res.json({ period: "monthly", data: result });
+    res.json({ period: "monthly", year, data: series });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
@@ -131,16 +137,12 @@ export const totalReport = async (_req, res) => {
       });
     }
 
-    const now = new Date(); // current moment
-    // Only aggregate up to "now" (ignore any future-dated rows, if they exist)
+    const now = new Date();
     const data = await Transaction.aggregate([
       { $match: { date: { $gte: new Date(first.date), $lte: now } } },
       {
         $group: {
-          _id: {
-            month: { $dateToString: { format: "%Y-%m", date: "$date" } },
-            type: "$type"
-          },
+          _id: { month: monthKey, type: "$type" },
           total: { $sum: "$amount" }
         }
       },
@@ -153,12 +155,8 @@ export const totalReport = async (_req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
-    // Build continuous month keys from the first month to the current month (inclusive)
-    const start = new Date(first.date);
-    start.setDate(1); start.setHours(0,0,0,0);
-
-    const end = new Date(now);
-    end.setDate(1); end.setHours(0,0,0,0); // current month bucket
+    const start = new Date(first.date); start.setDate(1); start.setHours(0,0,0,0);
+    const end = new Date(now); end.setDate(1); end.setHours(0,0,0,0);
 
     const keys = [];
     const cursor = new Date(start);
@@ -169,26 +167,18 @@ export const totalReport = async (_req, res) => {
       cursor.setMonth(cursor.getMonth() + 1);
     }
 
-    // Fill missing months with zeros
     const map = Object.fromEntries(
       data.map(d => [d._id, Object.fromEntries(d.items.map(i => [i.type, i.total]))])
     );
-    const series = keys.map(k => {
-      const item = map[k] || {};
-      return {
-        month: k,
-        income: item.income || 0,
-        expense: item.expense || 0,
-        savings: item.savings || 0
-      };
-    });
+    const series = keys.map(k => ({
+      month: k,
+      income: map[k]?.income || 0,
+      expense: map[k]?.expense || 0,
+      savings: map[k]?.savings || 0
+    }));
 
-    // Totals + balance
     const totals = series.reduce((acc, r) => {
-      acc.income += r.income;
-      acc.expense += r.expense;
-      acc.savings += r.savings;
-      return acc;
+      acc.income += r.income; acc.expense += r.expense; acc.savings += r.savings; return acc;
     }, { income: 0, expense: 0, savings: 0 });
     const balance = totals.income - totals.expense - totals.savings;
 
@@ -198,3 +188,16 @@ export const totalReport = async (_req, res) => {
   }
 };
 
+// ---------- Years list (first transaction year .. current year) ----------
+export const reportYears = async (_req, res) => {
+  try {
+    const nowYear = new Date().getFullYear();
+    const start = nowYear - 5;
+    const end = nowYear + 5;
+    const years = [];
+    for (let y = start; y <= end; y++) years.push(y);
+    res.json({ years });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
