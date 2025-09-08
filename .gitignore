@@ -1,35 +1,49 @@
 # dependencies
 node_modules/
 
-# env & secrets
-.env
-.env.*.local
+# builds / compiled output
+dist/
+build/
+*.tsbuildinfo
 
-# logs & pids
+# logs
 logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# runtime data
 pids/
 *.pid
 *.seed
 *.pid.lock
-
-# runtime data
 tmp/
 temp/
-.cache/
+
+# coverage & reports
 coverage/
+.nyc_output/
+reports/
+
+# env (keep example)
+.env
+.env.*.local
+.env.local
+!.env.example
+
+# uploads (if your app writes here; keep folder itself)
+uploads/*
+!uploads/.gitkeep
 
 # OS/editor
 .DS_Store
 Thumbs.db
-*.swp
-.idea/
 .vscode/
+.idea/
+*.swp
 
-# backups
-*.bak
-*.old
+# misc caches
+.eslintcache
+.cache/
