@@ -29,7 +29,7 @@ export const weeklyReport = async (req, res) => {
           $expr: {
             $eq: [
               { $dateTrunc: { date: "$date", unit: "week", timezone: tz, startOfWeek: "Monday" } },
-              { $dateTrunc: { date: now,   unit: "week", timezone: tz, startOfWeek: "Monday" } }
+              { $dateTrunc: { date: now, unit: "week", timezone: tz, startOfWeek: "Monday" } }
             ]
           }
         }
@@ -37,7 +37,7 @@ export const weeklyReport = async (req, res) => {
       {
         $group: {
           _id: {
-            day:  { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: tz } },
+            day: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: tz } },
             type: "$type"
           },
           total: { $sum: "$amount" }
@@ -85,45 +85,62 @@ export const weeklyReport = async (req, res) => {
 
 
 // ---------- Monthly (BY YEAR; returns { period:'monthly', year, data:[...] }) ----------
+// controllers/reportController.js
+
 export const monthlyReport = async (req, res) => {
   try {
     const now = new Date();
     const year = Number(req.query.year) || now.getFullYear();
 
-    const start = new Date(year, 0, 1, 0, 0, 0, 0);     // Jan 1
-    const end   = new Date(year + 1, 0, 1, 0, 0, 0, 0); // Jan 1 next year (exclusive)
+    const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);   // inclusive
+    const nextYear = new Date(year + 1, 0, 1, 0, 0, 0, 0); // exclusive
 
-    const data = await Transaction.aggregate([
-      { $match: { date: { $gte: start, $lt: end } } },
-      {
-        $group: {
-          _id: { month: monthKey, type: "$type" },
-          total: { $sum: "$amount" },
-        },
-      },
-      {
-        $group: {
-          _id: "$_id.month",
-          items: { $push: { type: "$_id.type", total: "$total" } },
-        },
-      },
+    // 1) Flow in the selected year (exactly as before)
+    const monthKey = { $dateToString: { format: "%Y-%m", date: "$date" } };
+    const flows = await Transaction.aggregate([
+      { $match: { date: { $gte: yearStart, $lt: nextYear } } },
+      { $group: { _id: { month: monthKey, type: "$type" }, total: { $sum: "$amount" } } },
+      { $group: { _id: "$_id.month", items: { $push: { type: "$_id.type", total: "$total" } } } },
       { $sort: { _id: 1 } },
     ]);
 
-    // Ensure all 12 months exist
+    // 2) Carry (everything BEFORE this year)
+    const carryAgg = await Transaction.aggregate([
+      { $match: { date: { $lt: yearStart } } },
+      { $group: { _id: "$type", total: { $sum: "$amount" } } },
+    ]);
+    const carry = { income: 0, expense: 0, savings: 0 };
+    carryAgg.forEach(i => { carry[i._id] = i.total; });
+
+    // 3) Build 12 month keys
     const keys = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
-    const series = fillSeries(keys, data).map(d => ({
-      month: d.period,
-      income: d.income,
-      expense: d.expense,
-      savings: d.savings,
+
+    // 4) Fill series for the year (still raw per-month flows)
+    const map = Object.fromEntries(
+      flows.map(d => [d._id, Object.fromEntries(d.items.map(i => [i.type, i.total]))])
+    );
+    const series = keys.map(k => ({
+      month: k,
+      income: map[k]?.income || 0,
+      expense: map[k]?.expense || 0,
+      savings: map[k]?.savings || 0,
     }));
 
-    res.json({ period: "monthly", year, data: series });
+    // 5) latestMonth: stop at current month for current year; full (12) for past years
+    const latestMonth = (year === now.getFullYear()) ? (now.getMonth() + 1) : 12;
+
+    res.json({
+      period: "monthly",
+      year,
+      data: series,      // raw flows (unchanged shape)
+      carry,             // NEW — totals prior to Jan of this year
+      latestMonth        // NEW — 1..12
+    });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
 };
+
 
 // ---------- Total (all-time, grouped by month; returns { period, data, totals }) ----------
 export const totalReport = async (_req, res) => {
@@ -155,8 +172,8 @@ export const totalReport = async (_req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
-    const start = new Date(first.date); start.setDate(1); start.setHours(0,0,0,0);
-    const end = new Date(now); end.setDate(1); end.setHours(0,0,0,0);
+    const start = new Date(first.date); start.setDate(1); start.setHours(0, 0, 0, 0);
+    const end = new Date(now); end.setDate(1); end.setHours(0, 0, 0, 0);
 
     const keys = [];
     const cursor = new Date(start);
