@@ -4,15 +4,20 @@ import {
   listTransactions,
   deleteTransaction,
   clearAll,
-  getTotals
+  getTotals,
 } from "../controllers/transactionController.js";
+import requireAuth from "../middleware/requireAuth.js";
 
 const router = Router();
 
-router.post("/", createTransaction);     // body: { type, amount, category?, note?, date? }
+// All transaction routes require authentication
+router.use(requireAuth);
+
+router.post("/", createTransaction);      // body: { type, amount, category?, note?, date? }
 router.get("/", listTransactions);
+router.get("/totals", getTotals);
 router.delete("/:id", deleteTransaction);
 router.delete("/", clearAll);
-router.get("/totals", getTotals);
 
 export default router;
+

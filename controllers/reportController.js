@@ -1,4 +1,8 @@
+// backend/controllers/reportController.js
+import mongoose from "mongoose";
 import Transaction from "../models/Transaction.js";
+
+const { ObjectId } = mongoose.Types;
 
 // ---------- helpers ----------
 const monthKey = { $dateToString: { format: "%Y-%m", date: "$date" } };
@@ -15,17 +19,18 @@ function fillSeries(keys, docs, typeKeys = ["income", "expense", "savings"]) {
     return out;
   });
 }
-// THIS WEEK (Mon–Sun) totals with timezone support
+
+// ---------- THIS WEEK (Mon–Sun) totals with timezone support (SCOPED TO USER) ----------
 export const weeklyReport = async (req, res) => {
   try {
-    // Use client-provided tz, or process.env.TZ, else UTC
+    const userId = new ObjectId(req.user.id);               // <-- scope
     const tz = req.query.tz || process.env.TZ || "UTC";
     const now = new Date();
 
-    // Aggregate only docs whose week (in tz) equals this week's start (in tz)
     const data = await Transaction.aggregate([
       {
         $match: {
+          user: userId,                                      // <-- scope
           $expr: {
             $eq: [
               { $dateTrunc: { date: "$date", unit: "week", timezone: tz, startOfWeek: "Monday" } },
@@ -67,7 +72,7 @@ export const weeklyReport = async (req, res) => {
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
-      return toLocalISO(d); // matches $dateToString above
+      return toLocalISO(d);
     });
 
     const result = days.map((day) => {
@@ -83,22 +88,19 @@ export const weeklyReport = async (req, res) => {
   }
 };
 
-
-// ---------- Monthly (BY YEAR; returns { period:'monthly', year, data:[...] }) ----------
-// controllers/reportController.js
-
+// ---------- Monthly (BY YEAR; returns { period:'monthly', year, data, carry, latestMonth }) ----------
 export const monthlyReport = async (req, res) => {
   try {
+    const userId = new ObjectId(req.user.id);               // <-- scope
     const now = new Date();
     const year = Number(req.query.year) || now.getFullYear();
 
-    const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);   // inclusive
-    const nextYear = new Date(year + 1, 0, 1, 0, 0, 0, 0); // exclusive
+    const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);     // inclusive
+    const nextYear  = new Date(year + 1, 0, 1, 0, 0, 0, 0); // exclusive
 
-    // 1) Flow in the selected year (exactly as before)
-    const monthKey = { $dateToString: { format: "%Y-%m", date: "$date" } };
+    // 1) Flow in the selected year
     const flows = await Transaction.aggregate([
-      { $match: { date: { $gte: yearStart, $lt: nextYear } } },
+      { $match: { user: userId, date: { $gte: yearStart, $lt: nextYear } } },  // <-- scope
       { $group: { _id: { month: monthKey, type: "$type" }, total: { $sum: "$amount" } } },
       { $group: { _id: "$_id.month", items: { $push: { type: "$_id.type", total: "$total" } } } },
       { $sort: { _id: 1 } },
@@ -106,7 +108,7 @@ export const monthlyReport = async (req, res) => {
 
     // 2) Carry (everything BEFORE this year)
     const carryAgg = await Transaction.aggregate([
-      { $match: { date: { $lt: yearStart } } },
+      { $match: { user: userId, date: { $lt: yearStart } } },                  // <-- scope
       { $group: { _id: "$type", total: { $sum: "$amount" } } },
     ]);
     const carry = { income: 0, expense: 0, savings: 0 };
@@ -115,7 +117,7 @@ export const monthlyReport = async (req, res) => {
     // 3) Build 12 month keys
     const keys = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`);
 
-    // 4) Fill series for the year (still raw per-month flows)
+    // 4) Fill series for the year (raw per-month flows)
     const map = Object.fromEntries(
       flows.map(d => [d._id, Object.fromEntries(d.items.map(i => [i.type, i.total]))])
     );
@@ -132,20 +134,25 @@ export const monthlyReport = async (req, res) => {
     res.json({
       period: "monthly",
       year,
-      data: series,      // raw flows (unchanged shape)
-      carry,             // NEW — totals prior to Jan of this year
-      latestMonth        // NEW — 1..12
+      data: series,
+      carry,
+      latestMonth
     });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
 };
 
-
-// ---------- Total (all-time, grouped by month; returns { period, data, totals }) ----------
-export const totalReport = async (_req, res) => {
+// ---------- Total (all-time; returns { period, data, totals }) ----------
+export const totalReport = async (req, res) => {
   try {
-    const first = await Transaction.findOne().sort({ date: 1 }).lean();
+    const userId = new ObjectId(req.user.id);               // <-- scope
+
+    const first = await Transaction
+      .findOne({ user: req.user.id })                       // <-- scope
+      .sort({ date: 1 })
+      .lean();
+
     if (!first) {
       return res.json({
         period: "total",
@@ -156,7 +163,7 @@ export const totalReport = async (_req, res) => {
 
     const now = new Date();
     const data = await Transaction.aggregate([
-      { $match: { date: { $gte: new Date(first.date), $lte: now } } },
+      { $match: { user: userId, date: { $gte: new Date(first.date), $lte: now } } }, // <-- scope
       {
         $group: {
           _id: { month: monthKey, type: "$type" },
@@ -205,7 +212,7 @@ export const totalReport = async (_req, res) => {
   }
 };
 
-// ---------- Years list (first transaction year .. current year) ----------
+// ---------- Years list (kept simple/global as before) ----------
 export const reportYears = async (_req, res) => {
   try {
     const nowYear = new Date().getFullYear();
