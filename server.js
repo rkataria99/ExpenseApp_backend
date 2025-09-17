@@ -18,8 +18,30 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 // CORS
-const ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
-app.use(cors({ origin: ORIGIN }));
+const rawOrigins = process.env.CLIENT_ORIGINS || process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const WHITELIST = rawOrigins
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    // allow server-to-server / curl / Postman (no Origin header)
+    if (!origin) return cb(null, true);
+
+    const allowed =
+      WHITELIST.includes(origin) ||
+      /\.vercel\.app$/.test(origin);   // allow any *.vercel.app by default
+
+    return allowed ? cb(null, true) : cb(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
+
+// Fast preflight
+app.options("*", cors());
+
 
 // Health
 app.get("/", (_req, res) => res.send("Expense Tracker API running"));
