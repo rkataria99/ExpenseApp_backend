@@ -143,16 +143,10 @@ export const monthlyReport = async (req, res) => {
   }
 };
 
-// ---------- Total (all-time; returns { period, data, totals }) ----------
-export const totalReport = async (req, res) => {
+// ---------- Total (all-time, grouped by month; returns { period, data, totals }) ----------
+export const totalReport = async (_req, res) => {
   try {
-    const userId = new ObjectId(req.user.id);               // <-- scope
-
-    const first = await Transaction
-      .findOne({ user: req.user.id })                       // <-- scope
-      .sort({ date: 1 })
-      .lean();
-
+    const first = await Transaction.findOne().sort({ date: 1 }).lean();
     if (!first) {
       return res.json({
         period: "total",
@@ -163,7 +157,7 @@ export const totalReport = async (req, res) => {
 
     const now = new Date();
     const data = await Transaction.aggregate([
-      { $match: { user: userId, date: { $gte: new Date(first.date), $lte: now } } }, // <-- scope
+      { $match: { date: { $gte: new Date(first.date), $lte: now } } },
       {
         $group: {
           _id: { month: monthKey, type: "$type" },
@@ -212,7 +206,7 @@ export const totalReport = async (req, res) => {
   }
 };
 
-// ---------- Years list (kept simple/global as before) ----------
+// ---------- Years list (first transaction year .. current year) ----------
 export const reportYears = async (_req, res) => {
   try {
     const nowYear = new Date().getFullYear();
