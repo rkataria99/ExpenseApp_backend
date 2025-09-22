@@ -143,11 +143,19 @@ export const monthlyReport = async (req, res) => {
   }
 };
 
-// ---------- Total (all-time, grouped by month; returns { period, data, totals }) ----------
-export const totalReport = async (_req, res) => {
+// Total (all-time, per-user, timezone-aware, grouped by month)
+export const totalReport = async (req, res) => {
   try {
-    const first = await Transaction.findOne().sort({ date: 1 }).lean();
-    if (!first) {
+    const userId = new mongoose.Types.ObjectId(req.user.id);
+    const tz = req.query.tz || process.env.TZ || "UTC";
+
+    // 1) earliest doc for THIS user (uses your {user, date} index)
+    const firstDoc = await Transaction
+      .findOne({ user: userId })
+      .sort({ date: 1 })
+      .lean();
+
+    if (!firstDoc) {
       return res.json({
         period: "total",
         data: [],
@@ -155,12 +163,15 @@ export const totalReport = async (_req, res) => {
       });
     }
 
-    const now = new Date();
+    // 2) aggregate all history for THIS user, month-bucketed in tz
     const data = await Transaction.aggregate([
-      { $match: { date: { $gte: new Date(first.date), $lte: now } } },
+      { $match: { user: userId } },
       {
         $group: {
-          _id: { month: monthKey, type: "$type" },
+          _id: {
+            month: { $dateToString: { format: "%Y-%m", date: "$date", timezone: tz } },
+            type: "$type"
+          },
           total: { $sum: "$amount" }
         }
       },
@@ -173,40 +184,48 @@ export const totalReport = async (_req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
-    const start = new Date(first.date); start.setDate(1); start.setHours(0, 0, 0, 0);
-    const end = new Date(now); end.setDate(1); end.setHours(0, 0, 0, 0);
+    // 3) build month keys from first month to current month (both in tz)
+    const fmtYM = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit" });
+    const firstMonthStr = fmtYM.format(new Date(firstDoc.date));
+    const nowMonthStr = fmtYM.format(new Date());
+    const nextYM = (ym) => {
+      const [y, m] = ym.split("-").map(Number);
+      const ny = m === 12 ? y + 1 : y;
+      const nm = m === 12 ? 1 : m + 1;
+      return `${ny}-${String(nm).padStart(2, "0")}`;
+    };
 
     const keys = [];
-    const cursor = new Date(start);
-    while (cursor <= end) {
-      const y = cursor.getFullYear();
-      const m = String(cursor.getMonth() + 1).padStart(2, "0");
-      keys.push(`${y}-${m}`);
-      cursor.setMonth(cursor.getMonth() + 1);
+    for (let k = firstMonthStr; ; k = nextYM(k)) {
+      keys.push(k);
+      if (k === nowMonthStr) break;
     }
 
+    // 4) fill series, compute totals/balance
     const map = Object.fromEntries(
       data.map(d => [d._id, Object.fromEntries(d.items.map(i => [i.type, i.total]))])
     );
+
     const series = keys.map(k => ({
       month: k,
-      income: map[k]?.income || 0,
-      expense: map[k]?.expense || 0,
-      savings: map[k]?.savings || 0
+      income:  map[k]?.income  ?? 0,
+      expense: map[k]?.expense ?? 0,
+      savings: map[k]?.savings ?? 0
     }));
 
-    const totals = series.reduce((acc, r) => {
-      acc.income += r.income; acc.expense += r.expense; acc.savings += r.savings; return acc;
-    }, { income: 0, expense: 0, savings: 0 });
+    const totals = series.reduce(
+      (a, r) => ({ income: a.income + r.income, expense: a.expense + r.expense, savings: a.savings + r.savings }),
+      { income: 0, expense: 0, savings: 0 }
+    );
     const balance = totals.income - totals.expense - totals.savings;
 
     res.json({ period: "total", data: series, totals: { ...totals, balance } });
   } catch (e) {
+    console.error("totalReport error:", e);
     res.status(500).json({ message: e.message });
   }
 };
-
-// ---------- Years list (first transaction year .. current year) ----------
+// at the bottom of controllers/reportController.js
 export const reportYears = async (_req, res) => {
   try {
     const nowYear = new Date().getFullYear();
