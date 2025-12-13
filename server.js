@@ -18,29 +18,41 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 // CORS
-const rawOrigins = process.env.CLIENT_ORIGINS || process.env.CLIENT_ORIGIN || "http://localhost:5173";
-const WHITELIST = rawOrigins
-  .split(",")
-  .map(s => s.trim())
-  .filter(Boolean);
+// CORS  ----------------------------------------------------
+const rawOrigins =
+  process.env.CLIENT_ORIGINS ||
+  process.env.CLIENT_ORIGIN ||
+  ""; // comma-separated, e.g. "https://expense-app-frontend-ten.vercel.app,http://localhost:5173"
 
-app.use(cors({
-  origin: (origin, cb) => {
-    // allow server-to-server / curl / Postman (no Origin header)
+const ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://expense-app-frontend-ten.vercel.app",
+  ...rawOrigins.split(",").map(s => s.trim()).filter(Boolean),
+];
+
+const corsOptions = {
+  origin(origin, cb) {
+    // allow server-to-server/curl (no Origin header)
     if (!origin) return cb(null, true);
 
     const allowed =
-      WHITELIST.includes(origin) ||
-      /\.vercel\.app$/.test(origin);   // allow any *.vercel.app by default
+      ALLOWED_ORIGINS.includes(origin) ||
+      /\.vercel\.app$/.test(origin); // allow any *.vercel.app (optional)
 
-    return allowed ? cb(null, true) : cb(new Error("Not allowed by CORS"));
+    return allowed ? cb(null, true) : cb(new Error(`CORS blocked for ${origin}`));
   },
-  methods: ["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
-  allowedHeaders: ["Content-Type","Authorization"]
-}));
+  // set to true if you use cookies; false if you use Authorization header only
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  exposedHeaders: ["Authorization"],
+  optionsSuccessStatus: 204,
+};
 
-// Fast preflight
-app.options("*", cors());
+app.use(cors(corsOptions));
+// Reply to preflights WITH THE SAME OPTIONS as above
+app.options("*", cors(corsOptions));
 
 
 // Health
