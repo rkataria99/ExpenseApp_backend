@@ -23,14 +23,14 @@ function fillSeries(keys, docs, typeKeys = ["income", "expense", "savings"]) {
 // ---------- THIS WEEK (Mon–Sun) totals with timezone support (SCOPED TO USER) ----------
 export const weeklyReport = async (req, res) => {
   try {
-    const userId = new ObjectId(req.user.id);               // <-- scope
+    const userId = new ObjectId(req.user.id);
     const tz = req.query.tz || process.env.TZ || "UTC";
     const now = new Date();
 
     const data = await Transaction.aggregate([
       {
         $match: {
-          user: userId,                                      // <-- scope
+          user: userId,
           $expr: {
             $eq: [
               { $dateTrunc: { date: "$date", unit: "week", timezone: tz, startOfWeek: "Monday" } },
@@ -57,28 +57,45 @@ export const weeklyReport = async (req, res) => {
       { $sort: { _id: 1 } }
     ]);
 
-    // Build Monday..Sunday in the SAME timezone (tz)
-    const toLocalISO = (d) =>
-      new Date(d).toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+    //  Build Mon..Sun keys in tz WITHOUT parsing locale strings back into Date
+    const tzTodayISO = (tzName, d = new Date()) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: tzName,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d); // YYYY-MM-DD
 
-    // Compute Monday 00:00 in tz
-    const localNow = new Date(now.toLocaleString("en-US", { timeZone: tz }));
-    const dow = localNow.getDay(); // 0=Sun..6=Sat (in tz)
-    const diffToMonday = dow === 0 ? -6 : 1 - dow;
-    const monday = new Date(localNow);
-    monday.setDate(localNow.getDate() + diffToMonday);
-    monday.setHours(0, 0, 0, 0);
+    const plainDateUTC = (ymd) => {
+      const [y, m, day] = ymd.split("-").map(Number);
+      return new Date(Date.UTC(y, m - 1, day)); // UTC midnight for that calendar date
+    };
 
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + i);
-      return toLocalISO(d);
-    });
+    const weekDaysISO = (tzName, d = new Date()) => {
+      const todayISO = tzTodayISO(tzName, d); // calendar date in tz
+      const today = plainDateUTC(todayISO);   // treat as "plain date"
+      const dow = today.getUTCDay();          // 0=Sun..6=Sat
+      const diffToMonday = dow === 0 ? -6 : 1 - dow;
+
+      const monday = new Date(today);
+      monday.setUTCDate(today.getUTCDate() + diffToMonday);
+
+      return Array.from({ length: 7 }, (_, i) => {
+        const x = new Date(monday);
+        x.setUTCDate(monday.getUTCDate() + i);
+        return x.toISOString().slice(0, 10); // YYYY-MM-DD
+      });
+    };
+
+    const days = weekDaysISO(tz, now);
+
+    //  Faster lookup than data.find()
+    const dayMap = Object.fromEntries(data.map((d) => [d._id, d.items]));
 
     const result = days.map((day) => {
-      const entry = data.find((d) => d._id === day);
+      const items = dayMap[day] || [];
       const totals = { income: 0, expense: 0, savings: 0 };
-      if (entry) entry.items.forEach((i) => (totals[i.type] = i.total));
+      items.forEach((i) => (totals[i.type] = i.total));
       return { day, ...totals };
     });
 
@@ -88,6 +105,7 @@ export const weeklyReport = async (req, res) => {
   }
 };
 
+
 // ---------- Monthly (BY YEAR; returns { period:'monthly', year, data, carry, latestMonth }) ----------
 export const monthlyReport = async (req, res) => {
   try {
@@ -96,7 +114,7 @@ export const monthlyReport = async (req, res) => {
     const year = Number(req.query.year) || now.getFullYear();
 
     const yearStart = new Date(year, 0, 1, 0, 0, 0, 0);     // inclusive
-    const nextYear  = new Date(year + 1, 0, 1, 0, 0, 0, 0); // exclusive
+    const nextYear = new Date(year + 1, 0, 1, 0, 0, 0, 0); // exclusive
 
     // 1) Flow in the selected year
     const flows = await Transaction.aggregate([
@@ -208,7 +226,7 @@ export const totalReport = async (req, res) => {
 
     const series = keys.map(k => ({
       month: k,
-      income:  map[k]?.income  ?? 0,
+      income: map[k]?.income ?? 0,
       expense: map[k]?.expense ?? 0,
       savings: map[k]?.savings ?? 0
     }));
