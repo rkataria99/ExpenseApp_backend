@@ -35,4 +35,7 @@ const TransactionSchema = new mongoose.Schema(
 // For faster queries by user + date
 TransactionSchema.index({ user: 1, date: 1 });
 
+// For faster monthly group-wise expense reports
+TransactionSchema.index({ user: 1, type: 1, date: 1, categoryGroup: 1 });
+
 export default mongoose.model("Transaction", TransactionSchema);

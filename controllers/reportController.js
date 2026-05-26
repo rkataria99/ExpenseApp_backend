@@ -6,6 +6,13 @@ const { ObjectId } = mongoose.Types;
 
 // ---------- helpers ----------
 const monthKey = { $dateToString: { format: "%Y-%m", date: "$date" } };
+const EXPENSE_GROUPS = [
+  { key: "home_share", label: "Home Share" },
+  { key: "self", label: "Self" },
+  { key: "gifts_family", label: "Gifts & Family" },
+  { key: "trip_family", label: "Trip Family" },
+  { key: "trip_self", label: "Trip Self" },
+];
 
 // build series with zeros for missing periods
 function fillSeries(keys, docs, typeKeys = ["income", "expense", "savings"]) {
@@ -157,6 +164,108 @@ export const monthlyReport = async (req, res) => {
       latestMonth
     });
   } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// ---------- Monthly expense report grouped by categoryGroup ----------
+export const monthlyGroupReport = async (req, res) => {
+  try {
+    const userId = new ObjectId(req.user.id);
+    const tz = req.query.tz || process.env.TZ || "UTC";
+    const now = new Date();
+
+    const year = Number(req.query.year) || now.getFullYear();
+    const month = Number(req.query.month) || now.getMonth() + 1; // 1-12
+
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+      return res.status(400).json({
+        message: "Valid year and month are required",
+      });
+    }
+
+    const selectedMonth = `${year}-${String(month).padStart(2, "0")}`;
+
+    const grouped = await Transaction.aggregate([
+      {
+        $match: {
+          user: userId,
+          type: "expense",
+        },
+      },
+      {
+        $project: {
+          amount: 1,
+          monthKey: {
+            $dateToString: {
+              format: "%Y-%m",
+              date: "$date",
+              timezone: tz,
+            },
+          },
+          categoryGroup: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ["$categoryGroup", null] },
+                  { $eq: ["$categoryGroup", ""] },
+                ],
+              },
+              "uncategorized",
+              "$categoryGroup",
+            ],
+          },
+        },
+      },
+      {
+        $match: {
+          monthKey: selectedMonth,
+        },
+      },
+      {
+        $group: {
+          _id: "$categoryGroup",
+          total: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $sort: {
+          _id: 1,
+        },
+      },
+    ]);
+
+    const map = Object.fromEntries(grouped.map((g) => [g._id, g]));
+
+    const data = EXPENSE_GROUPS.map((group) => ({
+      key: group.key,
+      label: group.label,
+      total: map[group.key]?.total || 0,
+      count: map[group.key]?.count || 0,
+    }));
+
+    if (map.uncategorized?.total) {
+      data.push({
+        key: "uncategorized",
+        label: "Uncategorized",
+        total: map.uncategorized.total,
+        count: map.uncategorized.count || 0,
+      });
+    }
+
+    const total = data.reduce((sum, item) => sum + Number(item.total || 0), 0);
+
+    res.json({
+      period: "monthlyGroup",
+      year,
+      month,
+      monthKey: selectedMonth,
+      data,
+      total,
+    });
+  } catch (e) {
+    console.error("monthlyGroupReport error:", e);
     res.status(500).json({ message: e.message });
   }
 };
