@@ -195,7 +195,6 @@ export const monthlyReport = async (req, res) => {
   }
 };
 
-// ---------- Monthly expense report grouped by categoryGroup ----------
 // ---------- Monthly expense report grouped by categoryGroup + subcategory ----------
 export const monthlyGroupReport = async (req, res) => {
   try {
@@ -349,6 +348,122 @@ export const monthlyGroupReport = async (req, res) => {
     });
   } catch (e) {
     console.error("monthlyGroupReport error:", e);
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// ---------- Transactions for selected monthly group + subcategory ----------
+export const monthlyGroupTransactions = async (req, res) => {
+  try {
+    const userId = new ObjectId(req.user.id);
+    const tz = req.query.tz || process.env.TZ || "UTC";
+    const now = new Date();
+
+    const year = Number(req.query.year) || now.getFullYear();
+    const month = Number(req.query.month) || now.getMonth() + 1;
+    const group = String(req.query.group || "").trim();
+    const category = String(req.query.category || "").trim();
+
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+      return res.status(400).json({
+        message: "Valid year and month are required",
+      });
+    }
+
+    if (!group) {
+      return res.status(400).json({
+        message: "Group is required",
+      });
+    }
+
+    if (!category) {
+      return res.status(400).json({
+        message: "Category is required",
+      });
+    }
+
+    const selectedMonth = `${year}-${String(month).padStart(2, "0")}`;
+
+    const docs = await Transaction.aggregate([
+      {
+        $match: {
+          user: userId,
+          type: "expense",
+        },
+      },
+      {
+        $project: {
+          amount: 1,
+          category: { $ifNull: ["$category", ""] },
+          note: { $ifNull: ["$note", ""] },
+          date: 1,
+          createdAt: 1,
+          monthKey: {
+            $dateToString: {
+              format: "%Y-%m",
+              date: "$date",
+              timezone: tz,
+            },
+          },
+          categoryGroup: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ["$categoryGroup", null] },
+                  { $eq: ["$categoryGroup", ""] },
+                ],
+              },
+              "uncategorized",
+              "$categoryGroup",
+            ],
+          },
+        },
+      },
+      {
+        $match: {
+          monthKey: selectedMonth,
+          categoryGroup: group,
+        },
+      },
+      {
+        $sort: {
+          date: -1,
+          createdAt: -1,
+        },
+      },
+    ]);
+
+    const transactions = docs
+      .filter((doc) => normalizeSubCategory(doc.categoryGroup, doc.category) === category)
+      .map((doc) => ({
+        id: doc._id,
+        amount: doc.amount || 0,
+        categoryGroup: doc.categoryGroup,
+        category: doc.category || "",
+        normalizedCategory: normalizeSubCategory(doc.categoryGroup, doc.category),
+        note: doc.note || "",
+        date: doc.date,
+        createdAt: doc.createdAt,
+      }));
+
+    const total = transactions.reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0
+    );
+
+    res.json({
+      period: "monthlyGroupTransactions",
+      year,
+      month,
+      monthKey: selectedMonth,
+      group,
+      category,
+      count: transactions.length,
+      total,
+      data: transactions,
+    });
+  } catch (e) {
+    console.error("monthlyGroupTransactions error:", e);
     res.status(500).json({ message: e.message });
   }
 };

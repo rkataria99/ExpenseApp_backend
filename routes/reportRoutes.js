@@ -3,6 +3,7 @@ import {
   weeklyReport,
   monthlyReport,
   monthlyGroupReport,
+  monthlyGroupTransactions,
   totalReport,
   reportYears,
 } from "../controllers/reportController.js";
@@ -16,6 +17,7 @@ router.use(requireAuth);
 router.get("/weekly", weeklyReport);
 router.get("/monthly", monthlyReport); // supports ?year=YYYY
 router.get("/monthly-groups", monthlyGroupReport);
+router.get("/monthly-group-transactions", monthlyGroupTransactions);
 router.get("/total", totalReport);
 router.get("/years", reportYears);     // list of selectable years for the user
 
