@@ -14,6 +14,33 @@ const EXPENSE_GROUPS = [
   { key: "trip_self", label: "Trip Self" },
 ];
 
+const SUBCATEGORIES_BY_GROUP = {
+  home_share: ["Direct home share", "Grocery", "Family Exp", "Misc"],
+  self: ["Food", "Movies", "Party", "Transport", "Outings", "Other"],
+  gifts_family: ["Gifts", "Family dinner", "Family outing"],
+  trip_family: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
+  trip_self: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
+};
+
+function normalizeSubCategory(groupKey, category) {
+  const value = String(category || "").trim();
+  const allowed = SUBCATEGORIES_BY_GROUP[groupKey] || [];
+
+  if (value && allowed.includes(value)) {
+    return value;
+  }
+
+  if (allowed.includes("Misc")) {
+    return "Misc";
+  }
+
+  if (allowed.includes("Other")) {
+    return "Other";
+  }
+
+  return value || "Uncategorized";
+}
+
 // build series with zeros for missing periods
 function fillSeries(keys, docs, typeKeys = ["income", "expense", "savings"]) {
   const map = Object.fromEntries(
@@ -169,6 +196,7 @@ export const monthlyReport = async (req, res) => {
 };
 
 // ---------- Monthly expense report grouped by categoryGroup ----------
+// ---------- Monthly expense report grouped by categoryGroup + subcategory ----------
 export const monthlyGroupReport = async (req, res) => {
   try {
     const userId = new ObjectId(req.user.id);
@@ -196,6 +224,7 @@ export const monthlyGroupReport = async (req, res) => {
       {
         $project: {
           amount: 1,
+          category: { $ifNull: ["$category", ""] },
           monthKey: {
             $dateToString: {
               format: "%Y-%m",
@@ -224,35 +253,89 @@ export const monthlyGroupReport = async (req, res) => {
       },
       {
         $group: {
-          _id: "$categoryGroup",
+          _id: {
+            group: "$categoryGroup",
+            category: "$category",
+          },
           total: { $sum: "$amount" },
           count: { $sum: 1 },
         },
       },
       {
         $sort: {
-          _id: 1,
+          "_id.group": 1,
+          "_id.category": 1,
         },
       },
     ]);
 
-    const map = Object.fromEntries(grouped.map((g) => [g._id, g]));
+    const groupMap = {};
 
-    const data = EXPENSE_GROUPS.map((group) => ({
-      key: group.key,
-      label: group.label,
-      total: map[group.key]?.total || 0,
-      count: map[group.key]?.count || 0,
-    }));
+    // Prepare all expected groups with all expected subcategories as 0.
+    EXPENSE_GROUPS.forEach((group) => {
+      groupMap[group.key] = {
+        key: group.key,
+        label: group.label,
+        total: 0,
+        count: 0,
+        children: (SUBCATEGORIES_BY_GROUP[group.key] || []).map((subcategory) => ({
+          key: subcategory,
+          label: subcategory,
+          total: 0,
+          count: 0,
+        })),
+      };
+    });
 
-    if (map.uncategorized?.total) {
-      data.push({
-        key: "uncategorized",
-        label: "Uncategorized",
-        total: map.uncategorized.total,
-        count: map.uncategorized.count || 0,
-      });
-    }
+    grouped.forEach((item) => {
+      const groupKey = item._id?.group || "uncategorized";
+      const rawCategory = item._id?.category || "";
+      const total = Number(item.total || 0);
+      const count = Number(item.count || 0);
+
+      if (!groupMap[groupKey]) {
+        groupMap[groupKey] = {
+          key: groupKey,
+          label: groupKey === "uncategorized" ? "Uncategorized" : groupKey,
+          total: 0,
+          count: 0,
+          children: [],
+        };
+      }
+
+      const categoryLabel = normalizeSubCategory(groupKey, rawCategory);
+
+      let child = groupMap[groupKey].children.find(
+        (item) => item.label === categoryLabel
+      );
+
+      if (!child) {
+        child = {
+          key: categoryLabel,
+          label: categoryLabel,
+          total: 0,
+          count: 0,
+        };
+
+        groupMap[groupKey].children.push(child);
+      }
+
+      child.total += total;
+      child.count += count;
+
+      groupMap[groupKey].total += total;
+      groupMap[groupKey].count += count;
+    });
+
+    const mainGroups = EXPENSE_GROUPS.map((group) => groupMap[group.key]);
+
+    const extraGroups = Object.values(groupMap).filter(
+      (group) =>
+        !EXPENSE_GROUPS.some((mainGroup) => mainGroup.key === group.key) &&
+        Number(group.total || 0) > 0
+    );
+
+    const data = [...mainGroups, ...extraGroups];
 
     const total = data.reduce((sum, item) => sum + Number(item.total || 0), 0);
 
