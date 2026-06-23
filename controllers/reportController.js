@@ -20,6 +20,7 @@ const SUBCATEGORIES_BY_GROUP = {
   gifts_family: ["Gifts", "Family dinner", "Family outing"],
   trip_family: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
   trip_self: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
+  refund_adjustment: ["Refunds adjustment to expense"],
 };
 
 function normalizeSubCategory(groupKey, category) {
@@ -217,13 +218,25 @@ export const monthlyGroupReport = async (req, res) => {
       {
         $match: {
           user: userId,
-          type: "expense",
+          type: { $in: ["expense", "expense_adjustment"] },
         },
       },
       {
         $project: {
-          amount: 1,
-          category: { $ifNull: ["$category", ""] },
+          amount: {
+            $cond: [
+              { $eq: ["$type", "expense_adjustment"] },
+              { $multiply: ["$amount", -1] },
+              "$amount",
+            ],
+          },
+          category: {
+            $cond: [
+              { $eq: ["$type", "expense_adjustment"] },
+              "Refunds adjustment to expense",
+              { $ifNull: ["$category", ""] },
+            ],
+          },
           monthKey: {
             $dateToString: {
               format: "%Y-%m",
@@ -233,14 +246,20 @@ export const monthlyGroupReport = async (req, res) => {
           },
           categoryGroup: {
             $cond: [
+              { $eq: ["$type", "expense_adjustment"] },
+              "refund_adjustment",
               {
-                $or: [
-                  { $eq: ["$categoryGroup", null] },
-                  { $eq: ["$categoryGroup", ""] },
+                $cond: [
+                  {
+                    $or: [
+                      { $eq: ["$categoryGroup", null] },
+                      { $eq: ["$categoryGroup", ""] },
+                    ],
+                  },
+                  "uncategorized",
+                  "$categoryGroup",
                 ],
               },
-              "uncategorized",
-              "$categoryGroup",
             ],
           },
         },
@@ -286,6 +305,21 @@ export const monthlyGroupReport = async (req, res) => {
       };
     });
 
+    groupMap.refund_adjustment = {
+      key: "refund_adjustment",
+      label: "Refunds Adjustment to Expense",
+      total: 0,
+      count: 0,
+      children: [
+        {
+          key: "Refunds adjustment to expense",
+          label: "Refunds adjustment to expense",
+          total: 0,
+          count: 0,
+        },
+      ],
+    };
+
     grouped.forEach((item) => {
       const groupKey = item._id?.group || "uncategorized";
       const rawCategory = item._id?.category || "";
@@ -328,13 +362,20 @@ export const monthlyGroupReport = async (req, res) => {
 
     const mainGroups = EXPENSE_GROUPS.map((group) => groupMap[group.key]);
 
+    const refundGroup = groupMap.refund_adjustment;
+
     const extraGroups = Object.values(groupMap).filter(
       (group) =>
+        group.key !== "refund_adjustment" &&
         !EXPENSE_GROUPS.some((mainGroup) => mainGroup.key === group.key) &&
         Number(group.total || 0) > 0
     );
 
-    const data = [...mainGroups, ...extraGroups];
+    const data = [
+      ...mainGroups,
+      ...(Number(refundGroup?.count || 0) > 0 ? [refundGroup] : []),
+      ...extraGroups,
+    ];
 
     const total = data.reduce((sum, item) => sum + Number(item.total || 0), 0);
 

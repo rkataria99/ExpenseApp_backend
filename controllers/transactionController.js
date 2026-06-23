@@ -13,30 +13,66 @@ export const createTransaction = async (req, res) => {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    const { type, amount, category, categoryGroup, note, date } = req.body;
-
-    if (!type || amount == null) {
-      return res.status(400).json({ message: "type and amount are required" });
-    }
-
-    const dt = parseDateOrNow(date);
-
-    // Server-side guard: no future-dated income/expense
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-    if ((type === "income" || type === "expense") && dt > today) {
-      return res.status(400).json({ message: "Future-dated income/expense is not allowed" });
-    }
-
-    const tx = await Transaction.create({
-      user: userId,                 // <-- tie to user
+    const {
       type,
       amount,
       category,
       categoryGroup,
       note,
+      date,
+      adjustExpenseReports,
+    } = req.body;
+
+    const amt = Number(amount);
+
+    if (!type || amount == null) {
+      return res.status(400).json({ message: "type and amount are required" });
+    }
+
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ message: "Valid amount is required" });
+    }
+
+    const dt = parseDateOrNow(date);
+
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+
+    if ((type === "income" || type === "expense") && dt > today) {
+      return res.status(400).json({
+        message: "Future-dated income/expense is not allowed",
+      });
+    }
+
+    const shouldCreateRefundAdjustment =
+      type === "income" && Boolean(adjustExpenseReports);
+
+    const tx = await Transaction.create({
+      user: userId,
+      type,
+      amount: amt,
+      category,
+      categoryGroup,
+      note,
       date: dt,
+      adjustsExpenseReports: shouldCreateRefundAdjustment,
     });
+
+    if (shouldCreateRefundAdjustment) {
+      await Transaction.create({
+        user: userId,
+        type: "expense_adjustment",
+        amount: amt,
+        categoryGroup: "refund_adjustment",
+        category: "Refunds adjustment to expense",
+        note: note?.trim()
+          ? `Refund adjustment for: ${note.trim()}`
+          : "Refund adjustment to expense",
+        date: dt,
+        linkedTransaction: tx._id,
+        isSystemGenerated: true,
+      });
+    }
 
     res.status(201).json(tx);
   } catch (e) {
@@ -66,8 +102,19 @@ export const deleteTransaction = async (req, res) => {
 
     const { id } = req.params;
 
-    const deleted = await Transaction.findOneAndDelete({ _id: id, user: userId }); // <-- scope + own
-    if (!deleted) return res.status(404).json({ message: "Not found" });
+    const tx = await Transaction.findOne({ _id: id, user: userId });
+
+    if (!tx) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    await Transaction.deleteMany({
+      user: userId,
+      $or: [
+        { _id: tx._id },
+        { linkedTransaction: tx._id },
+      ],
+    });
 
     res.json({ message: "Deleted" });
   } catch (e) {
