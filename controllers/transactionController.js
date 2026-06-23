@@ -63,11 +63,16 @@ export const createTransaction = async (req, res) => {
         user: userId,
         type: "expense_adjustment",
         amount: amt,
-        categoryGroup: "refund_adjustment",
-        category: "Refunds adjustment to expense",
+
+        // Report adjustment should reduce:
+        // Home Share → Family Exp
+        categoryGroup: "home_share",
+        category: "Family Exp",
+
         note: note?.trim()
-          ? `Refund adjustment for: ${note.trim()}`
-          : "Refund adjustment to expense",
+          ? `Refunds adjustment to expense: ${note.trim()}`
+          : "Refunds adjustment to expense",
+
         date: dt,
         linkedTransaction: tx._id,
         isSystemGenerated: true,
