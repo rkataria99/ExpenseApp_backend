@@ -231,11 +231,11 @@ export const monthlyGroupReport = async (req, res) => {
             ],
           },
 
-          // Refund adjustments should reduce Home Share → Family Exp
+          // Refund adjustments should reduce Home Share → Direct home share
           category: {
             $cond: [
               { $eq: ["$type", "expense_adjustment"] },
-              "Family Exp",
+              "Direct home share",
               { $ifNull: ["$category", ""] },
             ],
           },
@@ -432,7 +432,7 @@ export const monthlyGroupTransactions = async (req, res) => {
           category: {
             $cond: [
               { $eq: ["$type", "expense_adjustment"] },
-              "Family Exp",
+              "Direct home share",
               { $ifNull: ["$category", ""] },
             ],
           },

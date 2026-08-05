@@ -67,7 +67,7 @@ export const createTransaction = async (req, res) => {
         // Report adjustment should reduce:
         // Home Share → Family Exp
         categoryGroup: "home_share",
-        category: "Family Exp",
+        category: "Direct home share",
 
         note: note?.trim()
           ? `Refunds adjustment to expense: ${note.trim()}`
