@@ -15,7 +15,7 @@ const EXPENSE_GROUPS = [
 ];
 
 const SUBCATEGORIES_BY_GROUP = {
-  home_share: ["Direct home share", "Grocery", "Family Exp", "Misc"],
+  home_share: ["Direct home share", "Grocery", "Family Exp", "Mom Fb", "Misc"],
   self: ["Food", "Movies", "Party", "Transport", "Outings", "Other"],
   gifts_family: ["Gifts", "Family dinner", "Family outing"],
   trip_family: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
