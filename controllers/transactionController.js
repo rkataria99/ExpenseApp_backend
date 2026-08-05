@@ -21,6 +21,7 @@ export const createTransaction = async (req, res) => {
       note,
       date,
       adjustExpenseReports,
+      refundAdjustmentTarget,
     } = req.body;
 
     const amt = Number(amount);
@@ -59,15 +60,23 @@ export const createTransaction = async (req, res) => {
     });
 
     if (shouldCreateRefundAdjustment) {
+      const adjustmentTarget =
+        refundAdjustmentTarget === "self"
+          ? {
+            categoryGroup: "self",
+            category: "Other",
+          }
+          : {
+            categoryGroup: "home_share",
+            category: "Direct home share",
+          };
+
       await Transaction.create({
         user: userId,
         type: "expense_adjustment",
         amount: amt,
 
-        // Report adjustment should reduce:
-        // Home Share → Family Exp
-        categoryGroup: "home_share",
-        category: "Direct home share",
+        ...adjustmentTarget,
 
         note: note?.trim()
           ? `Refunds adjustment to expense: ${note.trim()}`
@@ -78,7 +87,6 @@ export const createTransaction = async (req, res) => {
         isSystemGenerated: true,
       });
     }
-
     res.status(201).json(tx);
   } catch (e) {
     res.status(500).json({ message: e.message });

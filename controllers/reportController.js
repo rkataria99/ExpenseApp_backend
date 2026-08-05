@@ -231,15 +231,21 @@ export const monthlyGroupReport = async (req, res) => {
             ],
           },
 
-          // Refund adjustments should reduce Home Share → Direct home share
+          // Refund adjustments reduce either Home Share → Direct home share
+          // or Self → Other, based on saved categoryGroup
           category: {
             $cond: [
               { $eq: ["$type", "expense_adjustment"] },
-              "Direct home share",
+              {
+                $cond: [
+                  { $eq: ["$categoryGroup", "self"] },
+                  "Other",
+                  "Direct home share",
+                ],
+              },
               { $ifNull: ["$category", ""] },
             ],
           },
-
           monthKey: {
             $dateToString: {
               format: "%Y-%m",
@@ -248,11 +254,18 @@ export const monthlyGroupReport = async (req, res) => {
             },
           },
 
-          // Also support old rows where categoryGroup was saved as refund_adjustment
+          // Old adjustment rows default to Home Share.
+          // New adjustment rows can also reduce Self.
           categoryGroup: {
             $cond: [
               { $eq: ["$type", "expense_adjustment"] },
-              "home_share",
+              {
+                $cond: [
+                  { $eq: ["$categoryGroup", "self"] },
+                  "self",
+                  "home_share",
+                ],
+              },
               {
                 $cond: [
                   {
@@ -432,7 +445,13 @@ export const monthlyGroupTransactions = async (req, res) => {
           category: {
             $cond: [
               { $eq: ["$type", "expense_adjustment"] },
-              "Direct home share",
+              {
+                $cond: [
+                  { $eq: ["$categoryGroup", "self"] },
+                  "Other",
+                  "Direct home share",
+                ],
+              },
               { $ifNull: ["$category", ""] },
             ],
           },
@@ -465,7 +484,13 @@ export const monthlyGroupTransactions = async (req, res) => {
           categoryGroup: {
             $cond: [
               { $eq: ["$type", "expense_adjustment"] },
-              "home_share",
+              {
+                $cond: [
+                  { $eq: ["$categoryGroup", "self"] },
+                  "self",
+                  "home_share",
+                ],
+              },
               {
                 $cond: [
                   {
