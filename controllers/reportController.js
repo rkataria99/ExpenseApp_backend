@@ -240,7 +240,7 @@ export const monthlyGroupReport = async (req, res) => {
                 $cond: [
                   { $eq: ["$categoryGroup", "self"] },
                   "Other",
-                  "Direct home share",
+                  "Family Exp",
                 ],
               },
               { $ifNull: ["$category", ""] },
@@ -449,7 +449,7 @@ export const monthlyGroupTransactions = async (req, res) => {
                 $cond: [
                   { $eq: ["$categoryGroup", "self"] },
                   "Other",
-                  "Direct home share",
+                  "Family Exp",
                 ],
               },
               { $ifNull: ["$category", ""] },

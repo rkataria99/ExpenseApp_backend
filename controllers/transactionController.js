@@ -68,7 +68,7 @@ export const createTransaction = async (req, res) => {
           }
           : {
             categoryGroup: "home_share",
-            category: "Direct home share",
+            category: "Family Exp",
           };
 
       await Transaction.create({
