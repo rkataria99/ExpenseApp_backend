@@ -39,9 +39,9 @@ export const createTransaction = async (req, res) => {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
 
-    if ((type === "income" || type === "expense") && dt > today) {
+    if (type === "income" && dt > today) {
       return res.status(400).json({
-        message: "Future-dated income/expense is not allowed",
+        message: "Future-dated income is not allowed",
       });
     }
 

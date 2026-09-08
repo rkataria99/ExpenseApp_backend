@@ -19,7 +19,7 @@ const SUBCATEGORIES_BY_GROUP = {
   self: ["Food", "Movies", "Party", "Transport", "Outings", "Other"],
   gifts_family: ["Gifts", "Family dinner", "Family outing"],
   trip_family: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
-  trip_self: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Misc"],
+  trip_self: ["Travel", "Stay", "Food", "Shopping", "Entire Trip Cost", "Other"],
   //refund_adjustment: ["Refunds adjustment to expense"],
 };
 
