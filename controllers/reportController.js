@@ -234,18 +234,8 @@ export const monthlyGroupReport = async (req, res) => {
           // Refund adjustments reduce either Home Share → Direct home share
           // or Self → Other, based on saved categoryGroup
           category: {
-            $cond: [
-              { $eq: ["$type", "expense_adjustment"] },
-              {
-                $cond: [
-                  { $eq: ["$categoryGroup", "self"] },
-                  "Other",
-                  "Family Exp",
-                ],
-              },
-              { $ifNull: ["$category", ""] },
-            ],
-          },
+  $ifNull: ["$category", ""],
+},
           monthKey: {
             $dateToString: {
               format: "%Y-%m",
@@ -257,29 +247,17 @@ export const monthlyGroupReport = async (req, res) => {
           // Old adjustment rows default to Home Share.
           // New adjustment rows can also reduce Self.
           categoryGroup: {
-            $cond: [
-              { $eq: ["$type", "expense_adjustment"] },
-              {
-                $cond: [
-                  { $eq: ["$categoryGroup", "self"] },
-                  "self",
-                  "home_share",
-                ],
-              },
-              {
-                $cond: [
-                  {
-                    $or: [
-                      { $eq: ["$categoryGroup", null] },
-                      { $eq: ["$categoryGroup", ""] },
-                    ],
-                  },
-                  "uncategorized",
-                  "$categoryGroup",
-                ],
-              },
-            ],
-          },
+  $cond: [
+    {
+      $or: [
+        { $eq: ["$categoryGroup", null] },
+        { $eq: ["$categoryGroup", ""] },
+      ],
+    },
+    "uncategorized",
+    "$categoryGroup",
+  ],
+},
         },
       },
       {

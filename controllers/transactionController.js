@@ -60,16 +60,59 @@ export const createTransaction = async (req, res) => {
     });
 
     if (shouldCreateRefundAdjustment) {
-      const adjustmentTarget =
-        refundAdjustmentTarget === "self"
-          ? {
-            categoryGroup: "self",
-            category: "Other",
-          }
-          : {
-            categoryGroup: "home_share",
-            category: "Family Exp",
-          };
+      let adjustmentTarget;
+
+switch (refundAdjustmentTarget) {
+  case "home_share_direct":
+    adjustmentTarget = {
+      categoryGroup: "home_share",
+      category: "Direct home share",
+    };
+    break;
+
+  case "home_share_grocery":
+    adjustmentTarget = {
+      categoryGroup: "home_share",
+      category: "Grocery",
+    };
+    break;
+
+  case "home_share_mom_fb":
+    adjustmentTarget = {
+      categoryGroup: "home_share",
+      category: "Mom Fb",
+    };
+    break;
+
+  case "home_share_misc":
+    adjustmentTarget = {
+      categoryGroup: "home_share",
+      category: "Misc",
+    };
+    break;
+
+  case "self":
+    adjustmentTarget = {
+      categoryGroup: "self",
+      category: "Other",
+    };
+    break;
+
+  case "gifts_family":
+    adjustmentTarget = {
+      categoryGroup: "gifts_family",
+      category: "Gifts",
+    };
+    break;
+
+  case "home_share":
+  default:
+    adjustmentTarget = {
+      categoryGroup: "home_share",
+      category: "Family Exp",
+    };
+    break;
+}
 
       await Transaction.create({
         user: userId,
